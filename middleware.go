@@ -42,10 +42,36 @@ func Recovery() MiddlewareFunc {
 // Auth returns an authentication middleware
 func Auth() MiddlewareFunc {
 	return func(ctx *Context) error {
-		// Skip auth for AuthService and ContactService methods
+		md, ok := metadata.FromIncomingContext(ctx.Context)
+		if !ok {
+			return status.Error(codes.Unauthenticated, "missing metadata")
+		}
+
+		authHeaders := md["authorization"]
+		if len(authHeaders) == 0 {
+			return status.Error(codes.Unauthenticated, "missing authorization header")
+		}
+
+		tokenString := strings.TrimPrefix(authHeaders[0], "Bearer ")
+		claims, err := validateJWT(tokenString)
+		if err != nil {
+			return status.Error(codes.Unauthenticated, "invalid token")
+		}
+
+		ctx.setAuth(claims)
+		return nil
+	}
+}
+
+// AuthWithSkip returns an authentication middleware that skips auth for specified service patterns
+func AuthWithSkip(skipPatterns ...string) MiddlewareFunc {
+	return func(ctx *Context) error {
+		// Check if this method should skip authentication
 		if method, ok := ctx.Value("method").(string); ok {
-			if strings.Contains(method, "AuthService") || strings.Contains(method, "ContactService") {
-				return nil
+			for _, pattern := range skipPatterns {
+				if strings.Contains(method, pattern) {
+					return nil
+				}
 			}
 		}
 
