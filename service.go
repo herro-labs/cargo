@@ -123,10 +123,8 @@ func (a *App) handleLogin(ctx *Context, req interface{}, hooks Hooks) (interface
 		return nil, status.Error(codes.Internal, "failed to generate token")
 	}
 
-	// Create response with token
-	return map[string]interface{}{
-		"token": token,
-	}, nil
+	// Return the token string directly - the application will wrap it in the proper protobuf response
+	return token, nil
 }
 
 // handleCreate processes create requests with hooks

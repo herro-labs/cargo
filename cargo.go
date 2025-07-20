@@ -241,11 +241,18 @@ func (a *App) createUnaryInterceptor() grpc.UnaryServerInterceptor {
 				a.authHooks.OnSuccess(cargoCtx, cargoCtx.Auth())
 			}
 
-			// Route to cargo service handler
-			return a.handleServiceCall(cargoCtx, req, info.FullMethod)
+			// Process through cargo service handler
+			result, err := a.handleServiceCall(cargoCtx, req, info.FullMethod)
+			if err != nil {
+				return nil, err
+			}
+
+			// Store the cargo result in context for the service implementation to use
+			ctx = context.WithValue(ctx, "cargo_result", result)
+			ctx = context.WithValue(ctx, "cargo_processed", true)
 		}
 
-		// For non-cargo services, use the original handler
+		// Call the original handler (service implementation)
 		return handler(ctx, req)
 	}
 }
