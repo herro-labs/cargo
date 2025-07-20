@@ -120,38 +120,8 @@ func (a *App) RegisterService(serviceDesc *grpc.ServiceDesc) {
 	// Store the service descriptor for tracking
 	a.registeredSvcs = append(a.registeredSvcs, serviceDesc)
 
-	// Register a stub service implementation with gRPC
-	// The actual handling will be done by the interceptor
-	stubImpl := &stubServiceImpl{}
-	a.server.RegisterService(serviceDesc, stubImpl)
-
-	log.Printf("Registered service: %s (handled via cargo interceptors)", serviceDesc.ServiceName)
-}
-
-// stubServiceImpl is a minimal stub that satisfies any service interface
-// All methods will be intercepted by cargo's interceptor
-type stubServiceImpl struct{}
-
-// This satisfies any service interface by implementing all possible method signatures
-// The interceptor will catch these calls before they reach these methods
-func (s *stubServiceImpl) Login(ctx context.Context, req interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("should be intercepted by cargo")
-}
-
-func (s *stubServiceImpl) Create(ctx context.Context, req interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("should be intercepted by cargo")
-}
-
-func (s *stubServiceImpl) Get(ctx context.Context, req interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("should be intercepted by cargo")
-}
-
-func (s *stubServiceImpl) List(req interface{}, stream interface{}) error {
-	return fmt.Errorf("should be intercepted by cargo")
-}
-
-func (s *stubServiceImpl) Delete(ctx context.Context, req interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("should be intercepted by cargo")
+	// Don't register with gRPC directly - let the unknown handler catch it
+	log.Printf("Registered service: %s (handled via cargo unknown method handler)", serviceDesc.ServiceName)
 }
 
 // RegisterHooks registers lifecycle hooks for a specific service
@@ -210,9 +180,11 @@ func (a *App) Run(addr ...string) {
 // initServer initializes the gRPC server with interceptors
 func (a *App) initServer() {
 	interceptor := a.createUnaryInterceptor()
+	unknownHandler := a.createUnknownMethodHandler()
 
 	var opts []grpc.ServerOption
 	opts = append(opts, grpc.UnaryInterceptor(interceptor))
+	opts = append(opts, grpc.UnknownServiceHandler(unknownHandler))
 
 	// Add TLS credentials if configured
 	if a.tlsConfig != nil {
@@ -293,6 +265,32 @@ func (a *App) isCargoService(fullMethod string) bool {
 		}
 	}
 	return false
+}
+
+// createUnknownMethodHandler creates a handler for unknown/unregistered gRPC methods
+func (a *App) createUnknownMethodHandler() grpc.StreamHandler {
+	return func(srv interface{}, stream grpc.ServerStream) error {
+		fullMethod, ok := grpc.MethodFromServerStream(stream)
+		if !ok {
+			return fmt.Errorf("failed to get method from stream")
+		}
+
+		// Check if this is a cargo service
+		if a.isCargoService(fullMethod) {
+			// This is a cargo service - handle it
+			return a.handleUnknownServiceCall(stream, fullMethod)
+		}
+
+		// Not a cargo service
+		return fmt.Errorf("unknown service method: %s", fullMethod)
+	}
+}
+
+// handleUnknownServiceCall handles calls to unregistered cargo services
+func (a *App) handleUnknownServiceCall(stream grpc.ServerStream, fullMethod string) error {
+	// For now, return unimplemented for streaming calls
+	// TODO: Implement proper streaming support
+	return fmt.Errorf("cargo service %s is not fully implemented yet", fullMethod)
 }
 
 // Context methods
