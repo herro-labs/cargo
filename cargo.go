@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"reflect"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,13 +21,14 @@ import (
 
 // App represents the Cargo application
 type App struct {
-	server      *grpc.Server
-	mongoClient *mongo.Client
-	middleware  []MiddlewareFunc
-	hooks       map[string]Hooks
-	authHooks   AuthHooks
-	port        string
-	tlsConfig   *TLSConfig
+	server         *grpc.Server
+	mongoClient    *mongo.Client
+	middleware     []MiddlewareFunc
+	hooks          map[string]Hooks
+	authHooks      AuthHooks
+	port           string
+	tlsConfig      *TLSConfig
+	registeredSvcs []*grpc.ServiceDesc // Track registered services
 }
 
 // Context wraps the standard context with additional framework functionality
@@ -77,6 +80,11 @@ type Query struct {
 	opts   *options.FindOptions
 }
 
+// universalServiceImpl is a universal service implementation that routes all calls to cargo's handler
+type universalServiceImpl struct {
+	app *App
+}
+
 var jwtSecret []byte
 
 func init() {
@@ -90,10 +98,11 @@ func init() {
 // New creates a new Cargo application instance
 func New() *App {
 	return &App{
-		hooks:      make(map[string]Hooks),
-		authHooks:  AuthHooks{},
-		port:       ":50051",
-		middleware: []MiddlewareFunc{},
+		hooks:          make(map[string]Hooks),
+		authHooks:      AuthHooks{},
+		port:           ":50051",
+		middleware:     []MiddlewareFunc{},
+		registeredSvcs: []*grpc.ServiceDesc{}, // Initialize service tracking
 	}
 }
 
@@ -113,7 +122,17 @@ func (a *App) RegisterService(serviceDesc *grpc.ServiceDesc) {
 	if a.server == nil {
 		a.initServer()
 	}
-	// Service handling is done through interceptors
+
+	// Store the service descriptor
+	a.registeredSvcs = append(a.registeredSvcs, serviceDesc)
+
+	// Create a universal service implementation that routes to cargo's handler
+	serviceImpl := &universalServiceImpl{app: a}
+
+	// Register the service with the gRPC server
+	a.server.RegisterService(serviceDesc, serviceImpl)
+
+	log.Printf("Registered service: %s", serviceDesc.ServiceName)
 }
 
 // RegisterHooks registers lifecycle hooks for a specific service
@@ -303,4 +322,151 @@ func (q *Query) GetFilter() bson.M {
 
 func (q *Query) GetOptions() *options.FindOptions {
 	return q.opts
+}
+
+// Universal service implementation methods that route to cargo's handler
+
+// Login implements AuthService.Login
+func (s *universalServiceImpl) Login(ctx context.Context, req interface{}) (interface{}, error) {
+	cargoCtx := s.app.newContext(ctx)
+	cargoCtx = cargoCtx.WithValue("method", "/app.AuthService/Login")
+
+	// Run middleware
+	for _, mw := range s.app.middleware {
+		if err := mw(cargoCtx); err != nil {
+			if s.app.authHooks.OnFailure != nil {
+				s.app.authHooks.OnFailure(cargoCtx, err)
+			}
+			return nil, err
+		}
+	}
+
+	// Call auth success hook if authenticated
+	if cargoCtx.Auth() != nil && s.app.authHooks.OnSuccess != nil {
+		s.app.authHooks.OnSuccess(cargoCtx, cargoCtx.Auth())
+	}
+
+	return s.app.handleServiceCall(cargoCtx, req, "/app.AuthService/Login")
+}
+
+// Create implements service Create methods
+func (s *universalServiceImpl) Create(ctx context.Context, req interface{}) (interface{}, error) {
+	cargoCtx := s.app.newContext(ctx)
+
+	// Determine the service name from the request type
+	serviceName := determineServiceName(req)
+	fullMethod := fmt.Sprintf("/app.%s/Create", serviceName)
+	cargoCtx = cargoCtx.WithValue("method", fullMethod)
+
+	// Run middleware
+	for _, mw := range s.app.middleware {
+		if err := mw(cargoCtx); err != nil {
+			if s.app.authHooks.OnFailure != nil {
+				s.app.authHooks.OnFailure(cargoCtx, err)
+			}
+			return nil, err
+		}
+	}
+
+	// Call auth success hook if authenticated
+	if cargoCtx.Auth() != nil && s.app.authHooks.OnSuccess != nil {
+		s.app.authHooks.OnSuccess(cargoCtx, cargoCtx.Auth())
+	}
+
+	return s.app.handleServiceCall(cargoCtx, req, fullMethod)
+}
+
+// Get implements service Get methods
+func (s *universalServiceImpl) Get(ctx context.Context, req interface{}) (interface{}, error) {
+	cargoCtx := s.app.newContext(ctx)
+
+	serviceName := determineServiceName(req)
+	fullMethod := fmt.Sprintf("/app.%s/Get", serviceName)
+	cargoCtx = cargoCtx.WithValue("method", fullMethod)
+
+	// Run middleware
+	for _, mw := range s.app.middleware {
+		if err := mw(cargoCtx); err != nil {
+			if s.app.authHooks.OnFailure != nil {
+				s.app.authHooks.OnFailure(cargoCtx, err)
+			}
+			return nil, err
+		}
+	}
+
+	// Call auth success hook if authenticated
+	if cargoCtx.Auth() != nil && s.app.authHooks.OnSuccess != nil {
+		s.app.authHooks.OnSuccess(cargoCtx, cargoCtx.Auth())
+	}
+
+	return s.app.handleServiceCall(cargoCtx, req, fullMethod)
+}
+
+// List implements service List methods
+func (s *universalServiceImpl) List(ctx context.Context, req interface{}) (interface{}, error) {
+	cargoCtx := s.app.newContext(ctx)
+
+	serviceName := determineServiceName(req)
+	fullMethod := fmt.Sprintf("/app.%s/List", serviceName)
+	cargoCtx = cargoCtx.WithValue("method", fullMethod)
+
+	// Run middleware
+	for _, mw := range s.app.middleware {
+		if err := mw(cargoCtx); err != nil {
+			if s.app.authHooks.OnFailure != nil {
+				s.app.authHooks.OnFailure(cargoCtx, err)
+			}
+			return nil, err
+		}
+	}
+
+	// Call auth success hook if authenticated
+	if cargoCtx.Auth() != nil && s.app.authHooks.OnSuccess != nil {
+		s.app.authHooks.OnSuccess(cargoCtx, cargoCtx.Auth())
+	}
+
+	return s.app.handleServiceCall(cargoCtx, req, fullMethod)
+}
+
+// Delete implements service Delete methods
+func (s *universalServiceImpl) Delete(ctx context.Context, req interface{}) (interface{}, error) {
+	cargoCtx := s.app.newContext(ctx)
+
+	serviceName := determineServiceName(req)
+	fullMethod := fmt.Sprintf("/app.%s/Delete", serviceName)
+	cargoCtx = cargoCtx.WithValue("method", fullMethod)
+
+	// Run middleware
+	for _, mw := range s.app.middleware {
+		if err := mw(cargoCtx); err != nil {
+			if s.app.authHooks.OnFailure != nil {
+				s.app.authHooks.OnFailure(cargoCtx, err)
+			}
+			return nil, err
+		}
+	}
+
+	// Call auth success hook if authenticated
+	if cargoCtx.Auth() != nil && s.app.authHooks.OnSuccess != nil {
+		s.app.authHooks.OnSuccess(cargoCtx, cargoCtx.Auth())
+	}
+
+	return s.app.handleServiceCall(cargoCtx, req, fullMethod)
+}
+
+// determineServiceName extracts service name from request type
+func determineServiceName(req interface{}) string {
+	typeName := reflect.TypeOf(req).Elem().Name()
+
+	// Map request types to service names
+	switch {
+	case strings.Contains(typeName, "Login"):
+		return "AuthService"
+	case strings.Contains(typeName, "Todo"):
+		return "TodoService"
+	case strings.Contains(typeName, "Contact"):
+		return "ContactService"
+	default:
+		return "UnknownService"
+	}
 }
