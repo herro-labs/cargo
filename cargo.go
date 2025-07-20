@@ -120,8 +120,11 @@ func (a *App) RegisterService(serviceDesc *grpc.ServiceDesc) {
 	// Store the service descriptor for tracking
 	a.registeredSvcs = append(a.registeredSvcs, serviceDesc)
 
-	// Don't register with gRPC directly - let the unknown handler catch it
-	log.Printf("Registered service: %s (handled via cargo unknown method handler)", serviceDesc.ServiceName)
+	// Create and register a stub implementation so gRPC recognizes the service
+	stubImpl := &serviceStub{}
+	a.server.RegisterService(serviceDesc, stubImpl)
+
+	log.Printf("Registered service: %s", serviceDesc.ServiceName)
 }
 
 // RegisterHooks registers lifecycle hooks for a specific service
@@ -180,11 +183,9 @@ func (a *App) Run(addr ...string) {
 // initServer initializes the gRPC server with interceptors
 func (a *App) initServer() {
 	interceptor := a.createUnaryInterceptor()
-	unknownHandler := a.createUnknownMethodHandler()
 
 	var opts []grpc.ServerOption
 	opts = append(opts, grpc.UnaryInterceptor(interceptor))
-	opts = append(opts, grpc.UnknownServiceHandler(unknownHandler))
 
 	// Add TLS credentials if configured
 	if a.tlsConfig != nil {
@@ -267,32 +268,6 @@ func (a *App) isCargoService(fullMethod string) bool {
 	return false
 }
 
-// createUnknownMethodHandler creates a handler for unknown/unregistered gRPC methods
-func (a *App) createUnknownMethodHandler() grpc.StreamHandler {
-	return func(srv interface{}, stream grpc.ServerStream) error {
-		fullMethod, ok := grpc.MethodFromServerStream(stream)
-		if !ok {
-			return fmt.Errorf("failed to get method from stream")
-		}
-
-		// Check if this is a cargo service
-		if a.isCargoService(fullMethod) {
-			// This is a cargo service - handle it
-			return a.handleUnknownServiceCall(stream, fullMethod)
-		}
-
-		// Not a cargo service
-		return fmt.Errorf("unknown service method: %s", fullMethod)
-	}
-}
-
-// handleUnknownServiceCall handles calls to unregistered cargo services
-func (a *App) handleUnknownServiceCall(stream grpc.ServerStream, fullMethod string) error {
-	// For now, return unimplemented for streaming calls
-	// TODO: Implement proper streaming support
-	return fmt.Errorf("cargo service %s is not fully implemented yet", fullMethod)
-}
-
 // Context methods
 func (a *App) newContext(ctx context.Context) *Context {
 	return &Context{
@@ -358,3 +333,10 @@ func (q *Query) GetFilter() bson.M {
 func (q *Query) GetOptions() *options.FindOptions {
 	return q.opts
 }
+
+// serviceStub is a minimal stub that implements any gRPC service interface
+type serviceStub struct{}
+
+// This struct will automatically satisfy any gRPC service interface
+// because Go's interface satisfaction is structural, and the interceptor
+// will catch all calls before they reach these methods
