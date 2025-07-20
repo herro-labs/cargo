@@ -13,6 +13,7 @@ cargo/
 ├── service.go            # gRPC service handling and hooks
 ├── database.go           # MongoDB operations
 ├── tls.go                # TLS/SSL support
+├── bson.go               # protoc-gen-go-bson integration
 ├── auth/                 # Authentication package
 ├── middleware/           # Additional middleware
 ├── database/             # Database utilities
@@ -24,6 +25,7 @@ cargo/
 
 - gRPC server with automatic service registration
 - MongoDB integration with automatic CRUD operations
+- **protoc-gen-go-bson plugin support** for optimized MongoDB serialization
 - JWT authentication with middleware
 - **TLS/SSL support with certificates**
 - **Mutual TLS (mTLS) support**
@@ -35,6 +37,95 @@ cargo/
 
 ```bash
 go get github.com/herro-labs/cargo
+go install github.com/herro-labs/protoc-gen-go-bson@latest
+```
+
+## protoc-gen-go-bson Integration
+
+Cargo is designed to work seamlessly with the [`protoc-gen-go-bson`](https://github.com/herro-labs/protoc-gen-go-bson) plugin for optimized MongoDB operations.
+
+### Code Generation
+
+Generate both protobuf and BSON types:
+
+```bash
+protoc --proto_path=proto \
+  --go_out=proto --go-grpc_out=proto \
+  --go-bson_out=proto \
+  --go_opt=paths=source_relative \
+  --go-grpc_opt=paths=source_relative \
+  --go-bson_opt=paths=source_relative \
+  proto/*.proto
+```
+
+### Example Proto File
+
+```protobuf
+syntax = "proto3";
+package app;
+option go_package = "./proto";
+
+service UserService {
+  rpc Create (User) returns (User);
+  rpc Get (User) returns (User);
+  rpc List (User) returns (stream User);
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+}
+```
+
+This generates:
+- `user.pb.go` - Standard protobuf types
+- `user_grpc.pb.go` - gRPC service definitions  
+- `user_bson.pb.go` - BSON-optimized types (UserBSON)
+
+### Using BSON Types with Cargo
+
+```go
+func main() {
+    app := cargo.New()
+    
+    // Register service (works with BSON types automatically)
+    app.RegisterService(&proto.UserService_ServiceDesc)
+    app.RegisterHooks("UserService", cargo.Hooks{
+        BeforeCreate: beforeCreateUser,
+        AfterRead:    afterReadUser,
+    })
+    
+    app.Run()
+}
+
+// Hook using BSON type for optimal MongoDB performance
+func beforeCreateUser(ctx *cargo.Context, input *proto.UserBSON) error {
+    // Cargo automatically handles:
+    // 1. BSON serialization/deserialization
+    // 2. MongoDB ObjectID mapping
+    // 3. Collection name inference (UserBSON -> users)
+    
+    claims := ctx.Auth()
+    // ... your logic here
+    
+    return nil
+}
+```
+
+### BSON Utilities
+
+Cargo provides utilities for working with BSON types:
+
+```go
+// Check if a type is a BSON wrapper
+isBSON := cargo.BSON.IsBSONType(reflect.TypeOf(&proto.UserBSON{}))
+
+// Extract the embedded protobuf message
+protoUser := cargo.BSON.ExtractProtoType(userBSON)
+
+// Get proper collection name for BSON types
+collectionName := cargo.BSON.GetBSONCollectionName(&proto.UserBSON{})
 ```
 
 ## Quick Start
@@ -179,6 +270,7 @@ func BeforeLogin(ctx *cargo.Context, input *proto.LoginRequest) (*cargo.AuthIden
 Cargo automatically maps protobuf messages to MongoDB collections:
 - `Todo` message → `todos` collection
 - `User` message → `users` collection
+- `UserBSON` type → `users` collection (with BSON optimization)
 - `ContactMessage` message → `contactmessages` collection
 
 ## Security Features
@@ -187,6 +279,7 @@ Cargo automatically maps protobuf messages to MongoDB collections:
 - **Mutual TLS (mTLS)** for client certificate verification
 - **JWT authentication** with configurable secrets
 - **Request/response hooks** for custom security logic
+- **protoc-gen-go-bson** for optimized and secure MongoDB operations
 
 ## License
 
