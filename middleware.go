@@ -42,9 +42,9 @@ func Recovery() MiddlewareFunc {
 // Auth returns an authentication middleware
 func Auth() MiddlewareFunc {
 	return func(ctx *Context) error {
-		// Skip auth for AuthService methods
+		// Skip auth for AuthService and ContactService methods
 		if method, ok := ctx.Value("method").(string); ok {
-			if strings.Contains(method, "AuthService") {
+			if strings.Contains(method, "AuthService") || strings.Contains(method, "ContactService") {
 				return nil
 			}
 		}
