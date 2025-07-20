@@ -113,18 +113,12 @@ func (a *App) UseAuthHooks(onSuccess func(*Context, *JWTClaims), onFailure func(
 
 // RegisterService registers a gRPC service with the application
 func (a *App) RegisterService(serviceDesc *grpc.ServiceDesc) {
-	if a.server == nil {
-		a.initServer()
-	}
-
 	// Store the service descriptor for tracking
 	a.registeredSvcs = append(a.registeredSvcs, serviceDesc)
-
-	// Create and register a stub implementation so gRPC recognizes the service
-	stubImpl := &serviceStub{}
-	a.server.RegisterService(serviceDesc, stubImpl)
-
 	log.Printf("Registered service: %s", serviceDesc.ServiceName)
+
+	// Note: The service will be registered later when the server is initialized
+	// and the actual service implementation is provided by the application
 }
 
 // RegisterHooks registers lifecycle hooks for a specific service
@@ -268,6 +262,14 @@ func (a *App) isCargoService(fullMethod string) bool {
 	return false
 }
 
+// GetServer returns the gRPC server instance for manual service registration
+func (a *App) GetServer() *grpc.Server {
+	if a.server == nil {
+		a.initServer()
+	}
+	return a.server
+}
+
 // Context methods
 func (a *App) newContext(ctx context.Context) *Context {
 	return &Context{
@@ -333,10 +335,3 @@ func (q *Query) GetFilter() bson.M {
 func (q *Query) GetOptions() *options.FindOptions {
 	return q.opts
 }
-
-// serviceStub is a minimal stub that implements any gRPC service interface
-type serviceStub struct{}
-
-// This struct will automatically satisfy any gRPC service interface
-// because Go's interface satisfaction is structural, and the interceptor
-// will catch all calls before they reach these methods
