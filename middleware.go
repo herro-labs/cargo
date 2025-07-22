@@ -53,7 +53,7 @@ func Auth() MiddlewareFunc {
 		}
 
 		tokenString := strings.TrimPrefix(authHeaders[0], "Bearer ")
-		claims, err := validateJWT(tokenString)
+		claims, err := ctx.app.validateJWT(tokenString)
 		if err != nil {
 			return status.Error(codes.Unauthenticated, "invalid token")
 		}
@@ -86,7 +86,7 @@ func AuthWithSkip(skipPatterns ...string) MiddlewareFunc {
 		}
 
 		tokenString := strings.TrimPrefix(authHeaders[0], "Bearer ")
-		claims, err := validateJWT(tokenString)
+		claims, err := ctx.app.validateJWT(tokenString)
 		if err != nil {
 			return status.Error(codes.Unauthenticated, "invalid token")
 		}

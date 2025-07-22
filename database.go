@@ -18,10 +18,9 @@ func getCollectionName(v interface{}) string {
 	return BSON.GetBSONCollectionName(v)
 }
 
-// getDatabase returns the default database
+// getDatabase returns the configured database
 func (a *App) getDatabase() *mongo.Database {
-	dbName := "todoapp" // default database name
-	return a.mongoClient.Database(dbName)
+	return a.mongoClient.Database(a.config.Database.MongoDB.Database)
 }
 
 // createInMongoDB inserts a document into MongoDB

@@ -14,28 +14,12 @@ type TLSConfig struct {
 	ClientCA string // Path to client CA file (for mutual TLS)
 }
 
-// WithTLS configures the app to use TLS with the provided certificate and key files
-func (a *App) WithTLS(certFile, keyFile string) *App {
-	a.tlsConfig = &TLSConfig{
-		CertFile: certFile,
-		KeyFile:  keyFile,
-	}
-	return a
-}
-
-// WithMutualTLS configures the app to use mutual TLS (client certificate verification)
-func (a *App) WithMutualTLS(certFile, keyFile, clientCA string) *App {
-	a.tlsConfig = &TLSConfig{
-		CertFile: certFile,
-		KeyFile:  keyFile,
-		ClientCA: clientCA,
-	}
-	return a
-}
+// Note: WithTLS and WithMutualTLS methods are now defined in cargo.go
+// These methods are kept here for reference but should be removed
 
 // createTLSCredentials creates gRPC TLS credentials from the TLS config
 func (a *App) createTLSCredentials() (credentials.TransportCredentials, error) {
-	cert, err := tls.LoadX509KeyPair(a.tlsConfig.CertFile, a.tlsConfig.KeyFile)
+	cert, err := tls.LoadX509KeyPair(a.config.TLS.CertFile, a.config.TLS.KeyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +30,7 @@ func (a *App) createTLSCredentials() (credentials.TransportCredentials, error) {
 	}
 
 	// If client CA is specified, enable mutual TLS
-	if a.tlsConfig.ClientCA != "" {
+	if a.config.TLS.ClientCA != "" {
 		config.ClientAuth = tls.RequireAndVerifyClientCert
 		// Note: In a full implementation, you'd load the client CA here
 	}
@@ -56,12 +40,12 @@ func (a *App) createTLSCredentials() (credentials.TransportCredentials, error) {
 
 // createSecureListener creates a TLS listener if TLS is configured
 func (a *App) createSecureListener() (net.Listener, error) {
-	if a.tlsConfig == nil {
+	if a.config.TLS.CertFile == "" {
 		// No TLS configured, use plain TCP
-		return net.Listen("tcp", a.port)
+		return net.Listen("tcp", a.config.Server.Port)
 	}
 
-	cert, err := tls.LoadX509KeyPair(a.tlsConfig.CertFile, a.tlsConfig.KeyFile)
+	cert, err := tls.LoadX509KeyPair(a.config.TLS.CertFile, a.config.TLS.KeyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -70,5 +54,5 @@ func (a *App) createSecureListener() (net.Listener, error) {
 		Certificates: []tls.Certificate{cert},
 	}
 
-	return tls.Listen("tcp", a.port, config)
+	return tls.Listen("tcp", a.config.Server.Port, config)
 }
