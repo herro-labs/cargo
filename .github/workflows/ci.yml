@@ -1,0 +1,78 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd mongosh
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-1.23-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-1.23-
+
+    - name: Install dependencies
+      run: make test-deps
+
+    - name: Wait for MongoDB to be ready
+      run: |
+        timeout 30 bash -c 'until mongosh --eval "print(\"MongoDB is ready\")" --quiet; do sleep 1; done'
+
+    - name: Run unit tests
+      run: make test-unit
+
+    - name: Run integration tests
+      run: make test-integration
+      env:
+        MONGODB_URI: mongodb://localhost:27017/cargo_test
+
+    - name: Generate test coverage
+      run: make test-coverage
+      env:
+        MONGODB_URI: mongodb://localhost:27017/cargo_test
+
+    - name: Check coverage threshold
+      run: make test-ci
+      env:
+        MONGODB_URI: mongodb://localhost:27017/cargo_test
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        fail_ci_if_error: false
+
+    - name: Clean up test database
+      run: |
+        mongosh --eval "db.dropDatabase()" cargo_test || true
+      if: always() 

@@ -1,0 +1,390 @@
+name: Cargo Framework Test Suite
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*', 'hotfix/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch: # Allow manual triggering
+
+env:
+  GO_VERSION: '1.23'
+  MONGODB_VERSION: '7.0'
+
+jobs:
+  # Job 1: Unit Tests (fast, no external dependencies)
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.21', '1.22', '1.23']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+          
+    - name: Install dependencies
+      run: make test-deps
+      
+    - name: Run unit tests
+      run: make test-unit
+      
+    - name: Run unit tests with race detection
+      run: make test-race
+      if: matrix.go-version == '1.23' # Only run race detection on latest Go version
+
+  # Job 2: Integration Tests (requires MongoDB)
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd mongosh
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+          
+    - name: Install dependencies
+      run: make test-deps
+      
+    - name: Wait for MongoDB
+      run: |
+        timeout 30 bash -c 'until mongosh --eval "print(\"MongoDB is ready\")" --quiet; do sleep 1; done'
+        
+    - name: Run integration tests
+      run: make test-integration
+      env:
+        MONGODB_URI: mongodb://localhost:27017/cargo_test
+        
+    - name: Clean up test data
+      run: |
+        mongosh --eval "db.dropDatabase()" cargo_test || true
+      if: always()
+
+  # Job 3: Performance Benchmarks
+  benchmarks:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd mongosh
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+          
+    - name: Install dependencies
+      run: make test-deps
+      
+    - name: Wait for MongoDB
+      run: |
+        timeout 30 bash -c 'until mongosh --eval "print(\"MongoDB is ready\")" --quiet; do sleep 1; done'
+        
+    - name: Run performance benchmarks
+      run: make test-benchmarks
+      env:
+        MONGODB_URI: mongodb://localhost:27017/cargo_test
+        
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results
+        path: |
+          *.bench
+          *.prof
+      if: always()
+
+  # Job 4: Test Coverage
+  coverage:
+    name: Test Coverage
+    runs-on: ubuntu-latest
+    
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd mongosh
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+          
+    - name: Install dependencies
+      run: make test-deps
+      
+    - name: Wait for MongoDB
+      run: |
+        timeout 30 bash -c 'until mongosh --eval "print(\"MongoDB is ready\")" --quiet; do sleep 1; done'
+        
+    - name: Run tests with coverage
+      run: make test-coverage
+      env:
+        MONGODB_URI: mongodb://localhost:27017/cargo_test
+        
+    - name: Check coverage threshold
+      run: make test-ci
+      env:
+        MONGODB_URI: mongodb://localhost:27017/cargo_test
+        
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: cargo-coverage
+        fail_ci_if_error: true
+        
+    - name: Upload coverage HTML report
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: coverage.html
+
+  # Job 5: Security and Quality Checks
+  security-checks:
+    name: Security & Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Run go vet
+      run: go vet ./...
+      
+    - name: Run go fmt check
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "The following files are not formatted:"
+          gofmt -s -l .
+          exit 1
+        fi
+        
+    - name: Run staticcheck
+      uses: dominikh/staticcheck-action@v1.3.0
+      with:
+        version: "2023.1.6"
+        install-go: false
+        
+    - name: Run gosec security scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: ./...
+        
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+
+  # Job 6: Build verification
+  build:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Build for ${{ matrix.goos }}/${{ matrix.goarch }}
+      run: |
+        GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v ./...
+      env:
+        CGO_ENABLED: 0
+
+  # Job 7: Dependency checks
+  dependency-checks:
+    name: Dependency Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Check for direct dependencies
+      run: go list -json -m all | jq -r 'select(.Dir | contains("GOROOT") | not) | .Path' | sort -u
+      
+    - name: Verify dependencies
+      run: go mod verify
+      
+    - name: Check for unused dependencies
+      run: |
+        go install github.com/dominikh/go-tools/cmd/staticcheck@latest
+        go mod tidy
+        git diff --exit-code go.mod go.sum
+
+  # Final job that depends on all others
+  test-results:
+    name: Test Results Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, benchmarks, coverage, security-checks, build, dependency-checks]
+    if: always()
+    
+    steps:
+    - name: Check test results
+      run: |
+        echo "Unit Tests: ${{ needs.unit-tests.result }}"
+        echo "Integration Tests: ${{ needs.integration-tests.result }}"
+        echo "Benchmarks: ${{ needs.benchmarks.result }}"
+        echo "Coverage: ${{ needs.coverage.result }}"
+        echo "Security Checks: ${{ needs.security-checks.result }}"
+        echo "Build: ${{ needs.build.result }}"
+        echo "Dependency Checks: ${{ needs.dependency-checks.result }}"
+        
+        if [[ "${{ needs.unit-tests.result }}" == "failure" ]] || \
+           [[ "${{ needs.integration-tests.result }}" == "failure" ]] || \
+           [[ "${{ needs.coverage.result }}" == "failure" ]] || \
+           [[ "${{ needs.security-checks.result }}" == "failure" ]] || \
+           [[ "${{ needs.build.result }}" == "failure" ]] || \
+           [[ "${{ needs.dependency-checks.result }}" == "failure" ]]; then
+          echo "❌ Some tests failed"
+          exit 1
+        else
+          echo "✅ All tests passed successfully!"
+        fi
+        
+    - name: Post results to PR
+      uses: actions/github-script@v6
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const results = {
+            'Unit Tests': '${{ needs.unit-tests.result }}',
+            'Integration Tests': '${{ needs.integration-tests.result }}',
+            'Benchmarks': '${{ needs.benchmarks.result }}',
+            'Coverage': '${{ needs.coverage.result }}',
+            'Security Checks': '${{ needs.security-checks.result }}',
+            'Build': '${{ needs.build.result }}',
+            'Dependency Checks': '${{ needs.dependency-checks.result }}'
+          };
+          
+          let comment = "## 🧪 Test Results\n\n";
+          for (const [test, result] of Object.entries(results)) {
+            const emoji = result === 'success' ? '✅' : result === 'failure' ? '❌' : '⚠️';
+            comment += `${emoji} **${test}**: ${result}\n`;
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  # Workflow cleanup
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [test-results]
+    if: always()
+    
+    steps:
+    - name: Clean up test artifacts
+      run: |
+        echo "Cleaning up temporary test files and caches"
+        # This step can be expanded to clean up any test artifacts
+        echo "Cleanup completed" 
